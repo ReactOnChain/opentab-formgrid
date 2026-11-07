@@ -47,15 +47,11 @@ export class AuthController {
             }
 
             const { email, password } = validationResult.data;
-            // On production installations, only the configured initial admin
-            // email can register. This is a bootstrap safeguard, NOT a
-            // complete invitation/authentication mechanism.
+            // Production accounts are provisioned through a private, one-time
+            // CLI command, never through an unauthenticated HTTP endpoint.
             if (process.env.NODE_ENV === 'production') {
-                const allowedEmail = process.env.FORMGRID_SIGNUP_EMAIL?.trim().toLowerCase();
-                if (!allowedEmail || email.trim().toLowerCase() !== allowedEmail) {
-                    res.status(403).json({ success: false, message: 'Registration is disabled' });
-                    return;
-                }
+                res.status(403).json({ success: false, message: 'Registration is disabled' });
+                return;
             }
             const result = await this.authService.signUp(email, password);
 
