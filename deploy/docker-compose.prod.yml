@@ -1,0 +1,119 @@
+# Review deploy/README.md before using with live data.
+services:
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: formgrid
+      MYSQL_USER: formgrid
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Required}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Required}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+  # Upstream has no migration history; replace db push before going live.
+  init-db:
+    build:
+      context: ..
+      dockerfile: deploy/api.Dockerfile
+    restart: "no"
+    environment:
+      DATABASE_URL: "mysql://formgrid:${MYSQL_PASSWORD:?Required}@db:3306/formgrid"
+      JWT_SECRET: ${JWT_SECRET:?Required}
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["pnpm", "exec", "prisma", "db", "push"]
+  backend:
+    build:
+      context: ..
+      dockerfile: deploy/api.Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      APP_URL: ${APP_URL:?Required}
+      DATABASE_URL: "mysql://formgrid:${MYSQL_PASSWORD:?Required}@db:3306/formgrid"
+      JWT_SECRET: ${JWT_SECRET:?Required}
+      JWT_EXPIRES_IN: 1d
+      FORMGRID_SIGNUP_EMAIL: ${FORMGRID_SIGNUP_EMAIL:?Required}
+      CORS_ALLOWED_ORIGINS: ${CORS_ALLOWED_ORIGINS:?Required}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-console}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      FILE_STORAGE_TYPE: local
+      UPLOAD_PATH: /app/packages/api/uploads
+      MAX_FILE_SIZE: "1048576"
+      MAX_FILES: "1"
+    volumes:
+      - uploads_data:/app/packages/api/uploads
+    depends_on:
+      init-db:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:4000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 8
+  queue-worker:
+    build:
+      context: ..
+      dockerfile: deploy/api.Dockerfile
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      APP_URL: ${APP_URL:?Required}
+      DATABASE_URL: "mysql://formgrid:${MYSQL_PASSWORD:?Required}@db:3306/formgrid"
+      JWT_SECRET: ${JWT_SECRET:?Required}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_DB: "0"
+      EMAIL_PROVIDER: ${EMAIL_PROVIDER:-console}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      FILE_STORAGE_TYPE: local
+      UPLOAD_PATH: /app/packages/api/uploads
+    volumes:
+      - uploads_data:/app/packages/api/uploads
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["node", "dist/queueWorker.js"]
+  dashboard:
+    build:
+      context: ..
+      dockerfile: deploy/dashboard.Dockerfile
+      args:
+        VITE_API_BASE_URL: "/"
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    # Only dashboard should get a Dokploy domain on internal port 80.
+    # No host ports are exposed.
+volumes:
+  mysql_data:
+  redis_data:
+  uploads_data:
