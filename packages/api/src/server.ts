@@ -28,19 +28,18 @@ config();
 const app = express();
 const PORT = env.PORT || 4000;
 
-// CORS configuration
+// Explicitly configure browser origins in production; never use a wildcard.
+const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS ||
+    'http://localhost:5173,http://localhost:3000')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
 app.use(cors({
-    origin: [
-        'http://localhost:3000',
-        'http://localhost:5173',
-        'http://127.0.0.1:3000',
-        'http://127.0.0.1:5173',
-        'http://127.0.0.1:5500',  // Added for HTML file testing
-        'http://localhost:5500'   // Added for HTML file testing
-    ],
+    origin: allowedOrigins,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
 // Initialize repositories with Prisma instance
